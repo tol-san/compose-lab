@@ -1,0 +1,23 @@
+
+# Override the default Docker Compose configuration for development.
+# Enables development builds, Flask debug mode, and live code updates
+# without rebuilding the images after every source code change.
+
+services:
+  web:
+    build:
+      target: dev  # Select the development stage from the Dockerfile
+    image: compose-lab/web:dev  # Use a development-specific image tag
+    environment:
+      FLASK_DEBUG: "1"  # Enable Flask debug mode and automatic code reloading
+    volumes:
+      - ./web:/app  # Mount local source code into the container for live updates
+
+  api:
+    build:
+      target: dev 
+    image: compose-lab/api:dev 
+    environment:
+      FLASK_DEBUG: "1"  
+    volumes:
+      - ./api:/app  

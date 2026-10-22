@@ -1,0 +1,143 @@
+name: compose-lab  # Project name used to group Compose resources
+
+# Reusable logging configuration using YAML anchors
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"   # Rotate logs when a file reaches 10 MB
+    max-file: "3"     # Keep up to 3 log files
+
+# Shared security settings for application containers
+x-app-hardening: &app-hardening
+  restart: unless-stopped
+  read_only: true    # Prevent writes to the container's root filesystem
+  tmpfs:
+    - /tmp           # Allow temporary files in memory
+  cap_drop:
+    - ALL             # Remove unnecessary Linux capabilities
+  security_opt:
+    - no-new-privileges:true  # Prevent privilege escalation
+  logging: *default-logging
+
+services:
+  web:
+    <<: *app-hardening  # Reuse shared security settings
+    build:
+      context: ./web
+      target: prod       # Build the production stage
+    image: compose-lab/web:${APP_VERSION:-1.0.0}
+    ports:
+      - "127.0.0.1:${WEB_PORT:-8000}:5000"  # Expose only on localhost
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      API_URL: http://api:5000  # Internal API address
+    depends_on:
+      redis:
+        condition: service_healthy  # Wait until Redis is ready
+      api:
+        condition: service_healthy  # Wait until the API is ready
+    healthcheck:
+      # Check whether the web application responds successfully
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/health', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"  # Limit CPU usage to half a CPU
+          memory: 128M  # Limit memory usage to 128 MB
+    networks:
+      - frontend
+
+  api:
+    <<: *app-hardening
+    build:
+      context: ./api
+      target: prod
+    image: compose-lab/api:${APP_VERSION:-1.0.0}
+    # No published ports; the API is accessed through Docker networks
+    environment:
+      DB_HOST: db
+      DB_PORT: "5432"
+      DB_USER: ${POSTGRES_USER}
+      DB_NAME: ${POSTGRES_DB}
+      DB_PASSWORD_FILE: /run/secrets/db_password  # Read password from a secret file
+    secrets:
+      - db_password
+    depends_on:
+      db:
+        condition: service_healthy  # Wait until PostgreSQL is ready
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/health', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 128M
+    networks:
+      - frontend
+      - backend
+
+  redis:
+    image: redis:7.4-alpine  # Use a specific image version instead of latest
+    command: ["redis-server", "--appendonly", "yes"]  # Enable append-only persistence
+    restart: unless-stopped
+    volumes:
+      - redis-data:/data  # Persist Redis data across container recreation
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]  # Check whether Redis responds
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    security_opt:
+      - no-new-privileges:true
+    logging: *default-logging
+    networks:
+      - frontend
+
+  db:
+    image: postgres:16.4-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password  # Load the database password from a file
+    secrets:
+      - db_password
+    volumes:
+      - pgdata:/var/lib/postgresql/data  # Persist database files
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro  # Run initialization SQL on first database setup
+    healthcheck:
+      # Check whether PostgreSQL is ready to accept connections
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    security_opt:
+      - no-new-privileges:true
+    logging: *default-logging
+    networks:
+      - backend
+
+# Separate application traffic from database traffic
+networks:
+  frontend:
+  backend:
+    internal: true  # Isolate this network from external connectivity
+
+# Named volumes preserve data beyond a container's lifecycle
+volumes:
+  redis-data:
+  pgdata:
+
+# Mount the password file only into services that need it
+secrets:
+  db_password:
+    file: ./secrets/db_password.txt
