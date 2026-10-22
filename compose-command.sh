@@ -1,3 +1,4 @@
+
 # ======================================================================
 # 01. CONFIGURATION — ពិនិត្យការបញ្ចូល Config និង Services
 # ======================================================================
@@ -86,3 +87,64 @@
 # # postgres:16.4-alpine អាចមិនមាន wget; ការបរាជ័យមិនចាំបាច់មានន័យថា Network blocked ទេ។
 # docker compose -f compose.yaml exec db wget -T 3 -qO- http://example.com || echo 'no outbound access (or wget unavailable)'
 # curl -s --max-time 3 http://localhost:5000 || echo 'API port not published'
+# docker compose -f compose.yaml port web 5000  # រំពឹង 127.0.0.1:8000 បើប្រើ default
+# docker network ls | grep compose-lab
+# docker network inspect compose-lab_backend --format '{{.Internal}} {{range .Containers}}{{.Name}} {{end}}' # true, api, db
+
+# ======================================================================
+# 09. PERSISTENCE — Volumes រក្សាទុក Data
+# ======================================================================
+# curl -s -o /dev/null -d 'text=persist me' http://localhost:8000/notes
+# docker compose -f compose.yaml down            # Keep named volumes
+# docker compose -f compose.yaml up -d           # Recreate containers
+# curl -s http://localhost:8000 | grep -E 'seen|persist' # Data គួរនៅសល់
+# docker volume ls | grep compose-lab
+# # DANGER: លុប pgdata និង redis-data (Data បាត់!) — Backup មុន
+# docker compose -f compose.yaml down -v
+# docker compose -f compose.yaml up -d           # init.sql Run ថ្មីនៅពេល pgdata ទទេ
+
+# ======================================================================
+# 10. FAILURE / RECOVERY — ពិនិត្យ Health និង Restart
+# ======================================================================
+# docker compose -f compose.yaml stop db         # បញ្ឈប់ DB
+# docker compose -f compose.yaml ps              # API អាចនៅ Healthy បើ /health មិនពិនិត្យ DB
+# curl -s http://localhost:8000 | grep -i error # Notes អាចមាន Error
+# docker compose -f compose.yaml start db        # Restore DB
+# docker compose -f compose.yaml kill api        # Kill API; restart policy អាចចាប់ផ្ដើមវិញ
+# docker compose -f compose.yaml ps
+# docker compose -f compose.yaml stop api        # depends_on មិនបញ្ឈប់ Web ដោយស្វ័យប្រវត្តិ
+# docker compose -f compose.yaml start api
+# # Challenge: បង្កើត /ready endpoint ដែល Query SELECT 1 ហើយកែ Healthcheck។
+
+# ======================================================================
+# 11. SCALING — API Replicas និង Web Port Conflict
+# ======================================================================
+# docker compose -f compose.yaml up -d --scale api=3 # API គ្មាន Published Port
+# docker compose -f compose.yaml ps
+# docker compose -f compose.yaml logs api        # DNS/Connection reuse មិនធានា Load Balance ស្មើៗគ្នា
+# docker compose -f compose.yaml up -d --scale api=1 # Restore 1 replica
+# # រំពឹង Fail: Web Replicas ប៉ះទង្គិច Fixed Host Port 8000
+# docker compose -f compose.yaml up -d --scale web=2
+# docker compose -f compose.yaml up -d --scale web=1 # Restore
+
+# ======================================================================
+# 12. CLEANUP — DANGEROUS: លុប Data / Images / Cache
+# ======================================================================
+# docker compose -f compose.yaml down            # Safe: Keep volumes
+# # DANGER: Named Volumes និង Service Images នឹងត្រូវលុប
+# docker compose -f compose.yaml down -v --rmi all
+# docker rmi compose-lab/api:builder compose-lab/api:dev-test compose-lab/api:prod-test
+# docker builder prune -f                        # លុប Build Cache ដែលមិនប្រើ (អាចប៉ះពាល់ Projects ផ្សេង)
+# docker system df                               # ពិនិត្យ Disk Usage
+
+# ======================================================================
+# TROUBLESHOOTING — ពិនិត្យបញ្ហា
+# ======================================================================
+# docker compose config                         # YAML / Variables / Secret paths
+# docker compose ps                             # Running / Exited / Unhealthy
+# docker compose logs --tail 100 api db         # DB Connection / Python Errors
+# docker compose build --no-cache api           # Rebuild ពេលសង្ស័យ Cache
+# # Port already allocated: ប្ដូរ WEB_PORT ក្នុង .env
+# # Secret permission denied: ពិនិត្យ owner/mode និង UID មុនកែ Permission
+# # Missing env: cp .env.example .env ហើយបំពេញតម្លៃ
+# # DB password changed: កែតាមវិធី Database Password Rotation; កុំ down -v ដើម្បីជួសជុលដោយមិន Backup
